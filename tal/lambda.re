@@ -1,59 +1,160 @@
-module type Lambda_impl_type = {
-  type term;
-  type ast;
+type term =
+| Term_marker
+| Term_unit
+| Term_var(string)
+| Term_abs(string, term)
+| Term_app(term, term);
 
-  let var: string => term;
-  let abs: string => term => term;
-  let app: term => term => term;
+/*
+type ty =
+| Ty_unit
+| Ty_lam(ty, ty);
+*/
 
-  let finish: term => ast;
+type ast =
+| Ast_marker
+| Ast_unit
+| Ast_var(int)
+| Ast_abs(string, ast)
+| Ast_app(ast, ast);
 
-  /* if eval1 is finished, it returns None */
-  let eval1: ast => option(ast);
-  let print_ast: ast => unit;
-  let print_term: term => unit;
+let unit = () => Term_unit;
+let marker = () => Term_marker;
+let var = (name) => Term_var(name);
+let abs = (name, body) => Term_abs(name, body);
+let app = (callee, parm) => Term_app(callee, parm);
+
+
+let rec print_term = (term) => {
+  let is_cmplx = fun
+  | Term_marker => false
+  | Term_unit => false
+  | Term_var(_) => false
+  | _ => true;
+
+  switch(term) {
+  | Term_marker => print_char('@')
+  | Term_unit => print_string("()")
+  | Term_var(name) => print_string(name)
+  | Term_abs(var, body) =>
+    print_string("/" ++ var ++ ".");
+    print_term(body);
+  | Term_app(callee, parm) =>
+    if (is_cmplx(callee)) { print_char('(') };
+    print_term(callee);
+    if (is_cmplx(callee)) { print_char(')') };
+    print_char(' ');
+    if (is_cmplx(parm)) { print_char('(') };
+    print_term(parm);
+    if (is_cmplx(parm)) { print_char(')') };
+  }
 };
-module type Lambda_helper_type = (M: Lambda_impl_type) => {
-  let (/>): M.term => M.term => M.term;
-  let (@>): string => M.term => M.term;
-  let var: string => M.term;
 
-  let print_term: M.term => unit;
-  let print_ast: M.ast => unit;
+let print_ast = (ast) => {
+  let rec bound_var_name = (idx, names) => switch (names) {
+  | [name, ...names] =>
+    if (idx == 0) { name } else { bound_var_name(idx - 1, names) }
+  | [] => failwith("malformed lambda calculus ast")
+  };
 
-  let finish: M.term => M.ast;
+  let is_cmplx = (ast) => switch (ast) {
+  | Ast_marker => false
+  | Ast_unit => false
+  | Ast_var(_) => false
+  | _ => true
+  };
 
-  let eval1: M.ast => M.ast;
-  let eval: M.ast => M.ast;
-  let eval_and_print: M.ast => M.ast;
-};
-module Lambda_helper: Lambda_helper_type = (M: Lambda_impl_type) => {
-  let (/>) = M.app;
-  let (@>) = M.abs;
-  let var = M.var;
-
-  let print_term = M.print_term;
-  let print_ast = M.print_ast;
-
-  let finish = M.finish;
-
-  let eval1 = (ast) => {
-    switch (M.eval1(ast)) {
-    | Some(ast) => ast
-    | None => ast
+  let rec print_ast_rec = (ast, names) => {
+    let print_cmplx = (ast) => {
+      if (is_cmplx(ast)) {
+        print_char('('); print_ast_rec(ast, names); print_char(')')
+      } else {
+        print_ast_rec(ast, names)
+      }
+    };
+    switch (ast) {
+    | Ast_marker => print_char('@')
+    | Ast_unit => print_string("()")
+    | Ast_var(idx) => print_string(bound_var_name(idx, names))
+    | Ast_app(callee, parm) =>
+      print_cmplx(callee);
+      print_char(' ');
+      print_cmplx(parm)
+    | Ast_abs(name, body) =>
+      print_char('/');
+      print_string(name);
+      print_char('.');
+      print_ast_rec(body, [name, ...names])
     }
   };
-  let rec eval = (ast) => {
-    switch (M.eval1(ast)) {
-    | Some(ast) => eval(ast)
-    | None => ast
-    }
-  };
-  let rec eval_and_print = (ast) => {
-    print_ast(ast) |> print_newline;
-    switch (M.eval1(ast)) {
-    | Some(ast) => eval_and_print(ast)
-    | None => ast
-    }
-  };
+
+  print_ast_rec(ast, [])
 };
+
+type type_error =
+| Te_variable_not_found(string);
+exception Type_error(type_error);
+
+let finish = (tm) => {
+  let rec get_var = (name, names, idx) => switch (names) {
+  | [x, ..._] when x == name => Ast_var(idx)
+  | [_, ...xs] => get_var(name, xs, idx + 1)
+  | [] => raise(Type_error(Te_variable_not_found(name)))
+  };
+  let rec finish_rec = (tm, names) => {
+    switch (tm) {
+    | Term_marker => Ast_marker
+    | Term_unit => Ast_unit
+    | Term_var(name) => get_var(name, names, 0)
+    | Term_app(callee, parm) =>
+      Ast_app(finish_rec(callee, names), finish_rec(parm, names))
+    | Term_abs(name, body) =>
+      Ast_abs(name, finish_rec(body, [name, ...names]))
+    }
+  };
+  finish_rec(tm, [])
+};
+
+let substitute = (body, parm) => {
+  let rec sub_rec = (body, parm, idx) => {
+    switch (body) {
+    | Ast_var(idx') when idx == idx' => parm
+    | Ast_app(callee', parm') =>
+      Ast_app(sub_rec(callee', parm, idx), sub_rec(parm', parm, idx))
+    | Ast_abs(name, body') =>
+      Ast_abs(name, sub_rec(body', parm, idx + 1))
+    | unchanged => unchanged
+    }
+  };
+  sub_rec(body, parm, 0)
+};
+
+let rec eval1 = (ast) => {
+  let rec eval_app = (callee, parm) => {
+    switch (callee) {
+    | Ast_marker => None
+    | Ast_unit => None
+    | Ast_var(_) => failwith("malformed lambda ast")
+    | Ast_abs(_, body) => Some(substitute(body, parm))
+    | Ast_app(callee', parm') =>
+      switch (eval_app(callee', parm')) {
+      | Some(callee) => Some(Ast_app(callee, parm))
+      | None =>
+        switch (eval1(parm)) {
+        | Some(parm) => Some(Ast_app(callee, parm))
+        | None => None
+        }
+      }
+    }
+  };
+
+  switch (ast) {
+  | Ast_marker => None
+  | Ast_unit => None
+  | Ast_var(_) => failwith("malformed lambda ast")
+  | Ast_abs(_, _) => None
+  | Ast_app(callee, parm) => eval_app(callee, parm)
+  }
+};
+
+module Type = {};
