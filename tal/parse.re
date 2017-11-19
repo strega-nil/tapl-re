@@ -3,6 +3,9 @@ open Lambda;
 type token =
 | Tok_lambda
 | Tok_dot
+| Tok_colon
+| Tok_arrow
+| Tok_unit
 | Tok_open_paren
 | Tok_close_paren
 | Tok_var(string);
@@ -85,10 +88,22 @@ let next_token = (lex) => {
     eat_whitespace();
     switch (next_ch()) {
     | Some('/') => Some(Tok_lambda)
+    | Some(':') => Some(Tok_colon)
     | Some('.') => Some(Tok_dot)
+    | Some('-') =>
+      switch (next_ch()) {
+      | Some('>') => Some(Tok_arrow)
+      | _ => raise(Lexer_error_unrecognized_character)
+      }
     | Some('(') => Some(Tok_open_paren)
     | Some(')') => Some(Tok_close_paren)
-    | Some(ch) when is_ident_start(ch) => Some(Tok_var(lex_ident(ch)))
+    | Some(ch) when is_ident_start(ch) =>
+      let res = lex_ident(ch);
+      if (res == "unit") {
+        Some(Tok_unit)
+      } else {
+        Some(Tok_var(lex_ident(ch)))
+      }
     | Some(ch) => raise(Lexer_error_unrecognized_character);
     | None => None
     }
@@ -120,9 +135,24 @@ let rec maybe_parse_term = (lex) => {
     | None => raise(Parser_error_unexpected_eof)
     }
   };
+  let get_colon = () => {
+    switch (next_token(lex)) {
+    | Some(Tok_colon) => ()
+    | Some(_) => raise(Parser_error_unexpected_token)
+    | None => raise(Parser_error_unexpected_eof)
+    }
+  };
   let get_close_paren = () => {
     switch (next_token(lex)) {
     | Some(Tok_close_paren) => ()
+    | Some(_) => raise(Parser_error_unexpected_token)
+    | None => raise(Parser_error_unexpected_eof)
+    }
+  };
+  let get_ty = () => {
+    switch(next_token(lex)) {
+    | Some(Tok_unit) => Lambda.ty_unit()
+    | Some(Tok_open_paren) => failwith("unimplemented")
     | Some(_) => raise(Parser_error_unexpected_token)
     | None => raise(Parser_error_unexpected_eof)
     }
@@ -132,11 +162,11 @@ let rec maybe_parse_term = (lex) => {
     | None | Some(Tok_close_paren) => fst
     | Some(Tok_open_paren) | Some(Tok_lambda) =>
       Lambda.app(fst, parse_term(lex))
-    | Some(Tok_dot) =>
-      raise(Parser_error_unexpected_token)
     | Some(Tok_var(snd)) =>
       eat_token(lex);
       parse_app_list(Lambda.app(fst, Lambda.var(snd)))
+    | Some(_) =>
+      raise(Parser_error_unexpected_token)
     }
   };
 
@@ -146,9 +176,11 @@ let rec maybe_parse_term = (lex) => {
   | Some(Tok_lambda) =>
     eat_token(lex);
     let name = get_var();
+    get_colon();
+    let ty = get_ty();
     get_dot();
     let body = parse_term(lex);
-    Some(Lambda.abs(name, body))
+    Some(Lambda.abs(ty, name, body))
   | Some(Tok_var(name)) =>
     eat_token(lex);
     Some(parse_app_list(Lambda.var(name)))
@@ -158,7 +190,7 @@ let rec maybe_parse_term = (lex) => {
     let ret = parse_term(lex);
     get_close_paren();
     Some(parse_app_list(ret))
-  | Some(Tok_dot) => raise(Parser_error_unexpected_token);
+  | Some(_) => raise(Parser_error_unexpected_token);
   }
 } and parse_term = (lex) => {
   switch (maybe_parse_term(lex)) {

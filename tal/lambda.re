@@ -1,29 +1,52 @@
+type ty =
+| Ty_unit
+| Ty_lam(ty, ty);
+
 type term =
 | Term_marker
 | Term_unit
 | Term_var(string)
-| Term_abs(string, term)
+| Term_abs(ty, string, term)
 | Term_app(term, term);
-
-/*
-type ty =
-| Ty_unit
-| Ty_lam(ty, ty);
-*/
 
 type ast =
 | Ast_marker
 | Ast_unit
 | Ast_var(int)
-| Ast_abs(string, ast)
+| Ast_abs(ty, string, ast)
 | Ast_app(ast, ast);
+
+let ty_unit = () => Ty_unit;
+let ty_lam = (lhs, rhs) => Ty_lam(lhs, rhs);
 
 let unit = () => Term_unit;
 let marker = () => Term_marker;
+
 let var = (name) => Term_var(name);
-let abs = (name, body) => Term_abs(name, body);
+let abs = (ty, name, body) => Term_abs(ty, name, body);
 let app = (callee, parm) => Term_app(callee, parm);
 
+let rec print_ty = (ty) => {
+  let is_unit = (ty) => {
+    switch (ty) {
+    | Ty_unit => true
+    | Ty_lam(_, _) => false
+    }
+  };
+
+  switch (ty) {
+  | Ty_unit => print_string("unit")
+  | Ty_lam(lhs, rhs) =>
+    if (is_unit(lhs)) {
+      print_string("unit -> ");
+    } else {
+      print_char('(');
+      print_ty(lhs);
+      print_string(") -> ");
+    };
+    print_ty(rhs)
+  }
+};
 
 let rec print_term = (term) => {
   let is_cmplx = fun
@@ -36,8 +59,12 @@ let rec print_term = (term) => {
   | Term_marker => print_char('@')
   | Term_unit => print_string("()")
   | Term_var(name) => print_string(name)
-  | Term_abs(var, body) =>
-    print_string("/" ++ var ++ ".");
+  | Term_abs(ty, var, body) =>
+    print_char('/');
+    print_string(var);
+    print_char(':');
+    print_ty(ty);
+    print_char('.');
     print_term(body);
   | Term_app(callee, parm) =>
     if (is_cmplx(callee)) { print_char('(') };
@@ -80,9 +107,11 @@ let print_ast = (ast) => {
       print_cmplx(callee);
       print_char(' ');
       print_cmplx(parm)
-    | Ast_abs(name, body) =>
+    | Ast_abs(ty, name, body) =>
       print_char('/');
       print_string(name);
+      print_char(':');
+      print_ty(ty);
       print_char('.');
       print_ast_rec(body, [name, ...names])
     }
@@ -91,15 +120,13 @@ let print_ast = (ast) => {
   print_ast_rec(ast, [])
 };
 
-type type_error =
-| Te_variable_not_found(string);
-exception Type_error(type_error);
-
+exception Type_error_variable_not_found(string);
+exception Type_error_incorrect_types(ty, ty);
 let finish = (tm) => {
   let rec get_var = (name, names, idx) => switch (names) {
   | [x, ..._] when x == name => Ast_var(idx)
   | [_, ...xs] => get_var(name, xs, idx + 1)
-  | [] => raise(Type_error(Te_variable_not_found(name)))
+  | [] => raise(Type_error_variable_not_found(name))
   };
   let rec finish_rec = (tm, names) => {
     switch (tm) {
@@ -108,8 +135,8 @@ let finish = (tm) => {
     | Term_var(name) => get_var(name, names, 0)
     | Term_app(callee, parm) =>
       Ast_app(finish_rec(callee, names), finish_rec(parm, names))
-    | Term_abs(name, body) =>
-      Ast_abs(name, finish_rec(body, [name, ...names]))
+    | Term_abs(ty, name, body) =>
+      Ast_abs(ty, name, finish_rec(body, [name, ...names]))
     }
   };
   finish_rec(tm, [])
@@ -121,8 +148,8 @@ let substitute = (body, parm) => {
     | Ast_var(idx') when idx == idx' => parm
     | Ast_app(callee', parm') =>
       Ast_app(sub_rec(callee', parm, idx), sub_rec(parm', parm, idx))
-    | Ast_abs(name, body') =>
-      Ast_abs(name, sub_rec(body', parm, idx + 1))
+    | Ast_abs(ty, name, body') =>
+      Ast_abs(ty, name, sub_rec(body', parm, idx + 1))
     | unchanged => unchanged
     }
   };
@@ -135,7 +162,7 @@ let rec eval1 = (ast) => {
     | Ast_marker => None
     | Ast_unit => None
     | Ast_var(_) => failwith("malformed lambda ast")
-    | Ast_abs(_, body) => Some(substitute(body, parm))
+    | Ast_abs(_, _, body) => Some(substitute(body, parm))
     | Ast_app(callee', parm') =>
       switch (eval_app(callee', parm')) {
       | Some(callee) => Some(Ast_app(callee, parm))
@@ -152,9 +179,7 @@ let rec eval1 = (ast) => {
   | Ast_marker => None
   | Ast_unit => None
   | Ast_var(_) => failwith("malformed lambda ast")
-  | Ast_abs(_, _) => None
+  | Ast_abs(_, _, _) => None
   | Ast_app(callee, parm) => eval_app(callee, parm)
   }
 };
-
-module Type = {};

@@ -15,7 +15,6 @@ let rec eval_and_print = (ast) => {
 
 let finish = Lambda.finish;
 
-let term = Parse.parse("/f.(/x.f (/y.x x y))(/x.f(/y.x x y))");
-/*let term = Parse.parse("/x.x x");*/
+let term = Parse.parse("/x:unit.x x");
 Lambda.print_term(term) |> print_newline;
 eval_and_print(finish(term));
