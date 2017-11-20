@@ -29,7 +29,9 @@ type lexer = {
   mutable peekahead: option(token),
 };
 
-exception Lexer_error_unrecognized_character;
+type lexer_error =
+| Lexer_error_end_of_file
+| Lexer_error_unrecognized_character(char);
 
 let is_whitespace = (ch) => {
   ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
@@ -48,7 +50,8 @@ let is_ident_continue = (ch) => {
 
 let make_lexer = (buff) => { buffer: buff, idx: 0, peekahead: None };
 
-let next_token = (lex) => {
+let next_token: lexer => Result.t(token, lexer_error) =
+(lex) => {
   let peek_ch = () => {
     if (String.length(lex.buffer) <= lex.idx) {
       None
@@ -94,174 +97,215 @@ let next_token = (lex) => {
   };
 
   switch (lex.peekahead) {
-  | Some(_) as peek =>
+  | Some(peek) =>
     lex.peekahead = None;
-    peek
+    Result.Ok(peek)
   | None =>
     eat_whitespace();
     switch (next_ch()) {
-    | Some('/') => Some(Tok_lambda)
-    | Some(':') => Some(Tok_colon)
-    | Some('.') => Some(Tok_dot)
+    | Some('/') => Result.Ok(Tok_lambda)
+    | Some(':') => Result.Ok(Tok_colon)
+    | Some('.') => Result.Ok(Tok_dot)
     | Some('-') =>
       switch (next_ch()) {
-      | Some('>') => Some(Tok_arrow)
-      | _ => raise(Lexer_error_unrecognized_character)
+      | Some('>') => Result.Ok(Tok_arrow)
+      | _ => Result.Err(Lexer_error_unrecognized_character('-'))
       }
-    | Some('@') => Some(Tok_marker)
-    | Some('(') => Some(Tok_open_paren)
-    | Some(')') => Some(Tok_close_paren)
+    | Some('@') => Result.Ok(Tok_marker)
+    | Some('(') => Result.Ok(Tok_open_paren)
+    | Some(')') => Result.Ok(Tok_close_paren)
     | Some(ch) when is_ident_start(ch) =>
       let res = lex_ident(ch);
       if (res == "unit") {
-        Some(Tok_unit)
+        Result.Ok(Tok_unit)
       } else {
-        Some(Tok_var(lex_ident(ch)))
+        Result.Ok(Tok_var(lex_ident(ch)))
       }
-    | Some(ch) => raise(Lexer_error_unrecognized_character);
-    | None => None
+    | Some(ch) => Result.Err(Lexer_error_unrecognized_character(ch))
+    | None => Result.Err(Lexer_error_end_of_file)
     }
   }
 };
 
 let peek_token = (lex) => {
-  lex.peekahead = next_token(lex);
-  lex.peekahead
+  next_token(lex) |> Result.map((tok) => {
+  lex.peekahead = Some(tok);
+  tok
+  })
 };
 
 let eat_token = (lex) => next_token(lex) |> ignore;
 
-exception Parser_error_unexpected_token(token);
-exception Parser_error_unexpected_eof;
-Printexc.register_printer(
-  fun
-  | Parser_error_unexpected_token(tok) =>
-    Some("unexpected token: " ++ string_of_token(tok))
-  | Parser_error_unexpected_eof =>
-    Some("unexpected end of file")
-  | _ => None
-);
+type parser_error =
+| Parser_error_unrecognized_character(char)
+| Parser_error_unexpected_token(token)
+| Parser_error_unexpected_eof;
+
+let print_parser_error = (err) => switch (err) {
+| Parser_error_unrecognized_character(ch) =>
+  Printf.printf("unrecognized character: %c (%d)", ch, int_of_char(ch))
+| Parser_error_unexpected_token(tok) =>
+  print_string("unexpected token: " ++ string_of_token(tok))
+| Parser_error_unexpected_eof =>
+  print_string("unexpected end of file")
+};
 
 let rec maybe_parse_term = (lex) => {
+  let map_err = (e) => switch (e) {
+  | Lexer_error_unrecognized_character(ch) =>
+    Result.Err(Parser_error_unrecognized_character(ch))
+  | Lexer_error_end_of_file =>
+    Result.Err(Parser_error_unexpected_eof)
+  };
   let get_var = () => {
     switch (next_token(lex)) {
-    | Some(Tok_var(name)) => name
-    | Some(tok) => raise(Parser_error_unexpected_token(tok))
-    | None => raise(Parser_error_unexpected_eof)
+    | Result.Ok(Tok_var(name)) => Result.Ok(name)
+    | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
+    | Result.Err(e) => map_err(e)
     }
   };
   let get_dot = () => {
     switch (next_token(lex)) {
-    | Some(Tok_dot) => ()
-    | Some(tok) => raise(Parser_error_unexpected_token(tok))
-    | None => raise(Parser_error_unexpected_eof)
+    | Result.Ok(Tok_dot) => Result.Ok(())
+    | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
+    | Result.Err(e) => map_err(e)
     }
   };
   let get_colon = () => {
     switch (next_token(lex)) {
-    | Some(Tok_colon) => ()
-    | Some(tok) => raise(Parser_error_unexpected_token(tok))
-    | None => raise(Parser_error_unexpected_eof)
+    | Result.Ok(Tok_colon) => Result.Ok(())
+    | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
+    | Result.Err(e) => map_err(e)
     }
   };
   let get_close_paren = () => {
     switch (next_token(lex)) {
-    | Some(Tok_close_paren) => ()
-    | Some(tok) => raise(Parser_error_unexpected_token(tok))
-    | None => raise(Parser_error_unexpected_eof)
+    | Result.Ok(Tok_close_paren) => Result.Ok(())
+    | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
+    | Result.Err(e) => map_err(e)
     }
   };
   let rec get_ty = () => {
     let lhs = switch (next_token(lex)) {
-    | Some(Tok_unit) => Lambda.ty_unit()
-    | Some(Tok_open_paren) =>
-      let ty = get_ty();
-      get_close_paren();
+    | Result.Ok(Tok_unit) => Result.Ok(Lambda.ty_unit())
+    | Result.Ok(Tok_open_paren) =>
+      get_ty() |> Result.bind((ty) =>
+      get_close_paren() |> Result.map(() =>
       ty
-    | Some(tok) => raise(Parser_error_unexpected_token(tok))
-    | None => raise(Parser_error_unexpected_eof)
+      ))
+    | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
+    | Result.Err(e) => map_err(e)
     };
+    
+    lhs |> Result.bind((lhs) =>
     switch (peek_token(lex)) {
-    | Some(Tok_arrow) =>
+    | Result.Ok(Tok_arrow) =>
       eat_token(lex);
-      Lambda.ty_lam(lhs, get_ty())
-    | Some(_) | None => lhs
+      get_ty() |> Result.map((it) =>
+      Lambda.ty_lam(lhs, it)
+      )
+    | Result.Ok(_) | Result.Err(Lexer_error_end_of_file) => Result.Ok(lhs)
+    | Result.Err(Lexer_error_unrecognized_character(ch)) =>
+      Result.Err(Parser_error_unrecognized_character(ch))
     }
+    )
   };
   let rec parse_app_list = (fst) => {
     switch (peek_token(lex)) {
-    | None | Some(Tok_close_paren) => fst
-    | Some(Tok_lambda) =>
-      Lambda.app(fst, parse_term(lex))
-    | Some(Tok_open_paren) =>
+    | Result.Err(Lexer_error_end_of_file) | Result.Ok(Tok_close_paren) =>
+      Result.Ok(fst)
+    | Result.Ok(Tok_lambda) =>
+      parse_term(lex) |> Result.map((it) =>
+      Lambda.app(fst, it)
+      )
+    | Result.Ok(Tok_open_paren) =>
       eat_token(lex);
       let snd = switch (peek_token(lex)) {
-      | Some(Tok_close_paren) => Lambda.unit()
-      | Some(_) => parse_term(lex)
-      | None => raise(Parser_error_unexpected_eof)
+      | Result.Ok(Tok_close_paren) => Result.Ok(Lambda.unit())
+      | Result.Ok(_) => parse_term(lex)
+      | Result.Err(e) => map_err(e)
       };
-      get_close_paren();
+      snd |> Result.bind((snd) =>
+      get_close_paren() |> Result.bind(() =>
       parse_app_list(Lambda.app(fst, snd))
-    | Some(Tok_var(snd)) =>
+      ))
+    | Result.Ok(Tok_var(snd)) =>
       eat_token(lex);
       parse_app_list(Lambda.app(fst, Lambda.var(snd)))
-    | Some(Tok_marker) =>
+    | Result.Ok(Tok_marker) =>
       eat_token(lex);
       parse_app_list(Lambda.app(fst, Lambda.marker()))
-    | Some(tok) =>
-      raise(Parser_error_unexpected_token(tok))
+    | Result.Ok(tok) =>
+      Result.Err(Parser_error_unexpected_token(tok))
+    | Result.Err(Lexer_error_unrecognized_character(ch)) =>
+      Result.Err(Parser_error_unrecognized_character(ch))
     }
   };
 
   switch (peek_token(lex)) {
-  | None => None
-  | Some(Tok_close_paren) => None
-  | Some(Tok_lambda) =>
+  | Result.Err(Lexer_error_end_of_file)
+  | Result.Ok(Tok_close_paren) => Result.Ok(None)
+  | Result.Ok(Tok_lambda) =>
     eat_token(lex);
-    let name = get_var();
-    get_colon();
-    let ty = get_ty();
-    get_dot();
-    let body = parse_term(lex);
+    get_var() |> Result.bind((name) =>
+    get_colon() |> Result.bind(() =>
+    get_ty() |> Result.bind((ty) =>
+    get_dot() |> Result.bind(() =>
+    parse_term(lex) |> Result.map((body) =>
     Some(Lambda.abs(ty, name, body))
-  | Some(Tok_var(name)) =>
+    )))))
+  | Result.Ok(Tok_var(name)) =>
     eat_token(lex);
-    Some(parse_app_list(Lambda.var(name)))
-  | Some(Tok_marker) =>
+    parse_app_list(Lambda.var(name)) |> Result.map((it) =>
+    Some(it)
+    )
+  | Result.Ok(Tok_marker) =>
     eat_token(lex);
-    Some(parse_app_list(Lambda.marker()))
-  | Some(Tok_open_paren) =>
+    parse_app_list(Lambda.marker()) |> Result.map((it) =>
+    Some(it)
+    )
+  | Result.Ok(Tok_open_paren) =>
     eat_token(lex);
     switch (peek_token(lex)) {
-    | Some(Tok_close_paren) => eat_token(lex); Some(parse_app_list(Lambda.unit()))
-    | Some(_) => 
-      let ret = parse_term(lex);
-      get_close_paren();
-      Some(parse_app_list(ret))
-    | None => raise(Parser_error_unexpected_eof)
+    | Result.Ok(Tok_close_paren) =>
+      eat_token(lex);
+      parse_app_list(Lambda.unit()) |> Result.map((it) =>
+      Some(it)
+      )
+    | Result.Ok(_) => 
+      parse_term(lex) |> Result.bind((ret) =>
+      get_close_paren() |> Result.bind(() =>
+      parse_app_list(ret) |> Result.map((it) =>
+      Some(it)
+      )))
+    | Result.Err(e) => map_err(e)
     }
-  | Some(tok) => raise(Parser_error_unexpected_token(tok))
+  | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
+  | Result.Err(Lexer_error_unrecognized_character(ch)) =>
+    Result.Err(Parser_error_unrecognized_character(ch))
   }
 } and parse_term = (lex) => {
-  switch (maybe_parse_term(lex)) {
-  | Some(tm) => tm
+  maybe_parse_term(lex) |> Result.bind((it) =>
+  switch(it) {
+  | Some(tm) => Result.Ok(tm)
   | None =>
     switch (next_token(lex)) {
-    | None => raise(Parser_error_unexpected_eof)
-    | Some(tok) => raise(Parser_error_unexpected_token(tok))
+    | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
+    | Result.Err(Lexer_error_end_of_file) =>
+      Result.Err(Parser_error_unexpected_eof)
+    | Result.Err(Lexer_error_unrecognized_character(ch)) =>
+      Result.Err(Parser_error_unrecognized_character(ch))
     }
   }
+  )
 };
 
 let parse = (buff) => {
-  let is_some = (opt) => switch (opt) {
-  | Some(_) => true
-  | None => false
-  };
   let lex = make_lexer(buff);
   let ret = parse_term(lex);
-  if (is_some(next_token(lex))) {
-    failwith("parser didn't eat all the input");
+  switch (next_token(lex)) {
+  | Result.Err(Lexer_error_end_of_file) => ()
+  | _ => failwith("parser didn't eat all the input")
   };
   ret
 };

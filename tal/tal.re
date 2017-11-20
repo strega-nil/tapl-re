@@ -30,6 +30,12 @@ let nats = "
   (/s:unit -> unit./z:unit.z)
 )";
 
-let term = Parse.parse(nats);
+let term = switch (Parse.parse(nats)) {
+| Result.Ok(term) => term
+| Result.Err(e) => Parse.print_parser_error(e); exit(1)
+};
 Lambda.print_term(term) |> print_newline;
-eval_and_print(finish(term));
+switch (finish(term)) {
+| Result.Ok(ast) => eval_and_print(ast) |> ignore
+| Result.Err(e) => print_string("error: "); Lambda.print_type_error(e) |> print_newline;
+};

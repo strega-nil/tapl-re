@@ -115,63 +115,72 @@ let string_of_ast = (ast) => {
 
 let print_ast = (ast) => print_string(string_of_ast(ast));
 
-exception Type_error_variable_not_found(string);
-exception Type_error_incorrect_types(ty, ty);
-exception Type_error_calling_non_callable(ty, ast);
+type type_error =
+| Type_error_variable_not_found(string)
+| Type_error_incorrect_types(ty, ty)
+| Type_error_calling_non_callable(ty, ast);
 
-Printexc.register_printer(
-  fun
-  | Type_error_variable_not_found(var) =>
-    Some("variable not found: " ++ var)
-  | Type_error_incorrect_types(lhs, rhs) =>
-    Some("type mismatch: " ++ string_of_ty(lhs) ++ " != " ++ string_of_ty(rhs))
-  | Type_error_calling_non_callable(ty, ast) =>
-    Some(
-      "attempt to call non-callable: " ++ string_of_ty(ty)
-      ++ "\n  " ++ string_of_ast(ast))
-  | _ => None
-);
+let print_type_error = (err) => switch (err) {
+| Type_error_variable_not_found(var) =>
+  print_string("variable not found: " ++ var)
+| Type_error_incorrect_types(lhs, rhs) =>
+  print_string(
+    "type mismatch: " ++ string_of_ty(lhs) ++ " != " ++ string_of_ty(rhs)
+  )
+| Type_error_calling_non_callable(ty, ast) =>
+  print_string(
+    "attempt to call non-callable: " ++ string_of_ty(ty)
+    ++ "\n  " ++ string_of_ast(ast)
+  )
+};
 
 let rec typeof_rec = (ast, tys) => switch (ast) {
 | Ast_app(callee, _) as ast' =>
   switch (typeof_rec(callee, tys)) {
-  | Ty_lam(_, ret) => ret
-  | ty => raise(Type_error_calling_non_callable(ty, ast'))
+  | Result.Ok(Ty_lam(_, ret)) => Result.Ok(ret)
+  | Result.Ok(ty) => Result.Err(Type_error_calling_non_callable(ty, ast'))
+  | Result.Err(e) => Result.Err(e)
   }
-| Ast_abs(ty, _, body) => Ty_lam(ty, typeof_rec(body, [ty, ...tys]))
-| Ast_unit => Ty_unit
-| Ast_marker => Ty_lam(Ty_unit, Ty_unit)
-| Ast_var(idx) => List.nth(tys, idx)
+| Ast_abs(ty, _, body) => 
+  typeof_rec(body, [ty, ...tys]) |> Result.map((it) => Ty_lam(ty, it))
+| Ast_unit => Result.Ok(Ty_unit)
+| Ast_marker => Result.Ok(Ty_lam(Ty_unit, Ty_unit))
+| Ast_var(idx) => Result.Ok(List.nth(tys, idx))
 };
 
-let typeof = (ast) => typeof_rec(ast, []);
+let typeof = (ast) => switch (typeof_rec(ast, [])) {
+| Result.Ok(ty) => ty
+| Result.Err(_) => failwith("malformed ast")
+};
 
 let finish = (tm) => {
   let rec get_var = (name, names, idx) => switch (names) {
-  | [x, ..._] when x == name => Ast_var(idx)
+  | [x, ..._] when x == name => Result.Ok(Ast_var(idx))
   | [_, ...xs] => get_var(name, xs, idx + 1)
-  | [] => raise(Type_error_variable_not_found(name))
+  | [] => Result.Err(Type_error_variable_not_found(name))
   };
   let rec finish_rec = (tm, names, tys) => {
     switch (tm) {
-    | Term_marker => Ast_marker
-    | Term_unit => Ast_unit
+    | Term_marker => Result.Ok(Ast_marker)
+    | Term_unit => Result.Ok(Ast_unit)
     | Term_var(name) => get_var(name, names, 0)
     | Term_app(callee, parm) =>
-      let callee' = finish_rec(callee, names, tys);
-      let parm' = finish_rec(parm, names, tys);
-      switch (typeof_rec(callee', tys)) {
+      finish_rec(callee, names, tys) |> Result.bind((callee') =>
+      finish_rec(parm, names, tys) |> Result.bind((parm') =>
+      typeof_rec(callee', tys) |> Result.bind((it) =>
+      switch (it) {
       | Ty_lam(parm_ty, _) =>
-        let parm_ty' = typeof_rec(parm', tys);
+        typeof_rec(parm', tys) |> Result.bind((parm_ty') =>
         if (parm_ty != parm_ty') {
-          raise(Type_error_incorrect_types(parm_ty, parm_ty'));
+          Result.Err(Type_error_incorrect_types(parm_ty, parm_ty'));
         } else {
-          Ast_app(callee', parm')
-        }
-      | ty => raise(Type_error_calling_non_callable(ty, Ast_app(callee', parm')))
-      }
+          Result.Ok(Ast_app(callee', parm'))
+        })
+      | ty => Result.Err(Type_error_calling_non_callable(ty, Ast_app(callee', parm')))
+      })))
     | Term_abs(ty, name, body) =>
-      Ast_abs(ty, name, finish_rec(body, [name, ...names], [ty, ...tys]))
+      finish_rec(body, [name, ...names], [ty, ...tys]) |> Result.map((body') =>
+      Ast_abs(ty, name, body'))
     }
   };
   finish_rec(tm, [], [])
