@@ -11,6 +11,7 @@ type token =
   | Tok_marker
   | Tok_open_paren
   | Tok_close_paren
+  | Tok_underscore
   | Tok_var(string);
 
 let string_of_token = (tok) =>
@@ -23,6 +24,7 @@ let string_of_token = (tok) =>
   | Tok_marker => "@"
   | Tok_open_paren => "("
   | Tok_close_paren => ")"
+  | Tok_underscore => "_"
   | Tok_var(name) => name
   };
 
@@ -116,6 +118,8 @@ let next_token: lexer => Result.t(token, lexer_error) =
         let res = lex_ident(ch);
         if (res == "unit") {
           Result.Ok(Tok_unit)
+        } else if (res == "_") {
+          Result.Ok(Tok_underscore)
         } else {
           Result.Ok(Tok_var(lex_ident(ch)))
         }
@@ -155,9 +159,11 @@ let rec maybe_parse_term = (lex) => {
     | Lexer_error_unrecognized_character(ch) => Result.Err(Parser_error_unrecognized_character(ch))
     | Lexer_error_end_of_file => Result.Err(Parser_error_unexpected_eof)
     };
-  let get_var = () =>
+  /* note: returns None for _, Some(name) for anything else */
+  let get_var_or_under = () =>
     switch (next_token(lex)) {
-    | Result.Ok(Tok_var(name)) => Result.Ok(name)
+    | Result.Ok(Tok_var(name)) => Result.Ok(Some(name))
+    | Result.Ok(Tok_underscore) => Result.Ok(None)
     | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))
     | Result.Err(e) => map_err(e)
     };
@@ -227,7 +233,7 @@ let rec maybe_parse_term = (lex) => {
   | Result.Ok(Tok_close_paren) => Result.Ok(None)
   | Result.Ok(Tok_lambda) =>
     eat_token(lex);
-    get_var()
+    get_var_or_under()
     >>= (name) => get_colon()
     >>= () => get_ty()
     >>= (ty) => get_dot()

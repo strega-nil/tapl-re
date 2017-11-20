@@ -8,14 +8,14 @@ type term =
   | Term_marker
   | Term_unit
   | Term_var(string)
-  | Term_abs(ty, string, term)
+  | Term_abs(ty, option(string), term)
   | Term_app(term, term);
 
 type ast =
   | Ast_marker
   | Ast_unit
   | Ast_var(int)
-  | Ast_abs(ty, string, ast)
+  | Ast_abs(ty, option(string), ast)
   | Ast_app(ast, ast);
 
 let ty_unit = () => Ty_unit;
@@ -66,7 +66,10 @@ let rec print_term = (term) => {
   | Term_var(name) => print_string(name)
   | Term_abs(ty, var, body) =>
     print_char('/');
-    print_string(var);
+    switch (var) {
+    | Some(var) => print_string(var)
+    | None => print_char('_')
+    };
     print_char(':');
     print_ty(ty);
     print_char('.');
@@ -95,7 +98,10 @@ let string_of_ast = (ast) => {
     switch names {
     | [name, ...names] =>
       if (idx == 0) {
-        name
+        switch name {
+        | Some(name) => name
+        | None => failwith("malformed lambda calculus ast")
+        }
       } else {
         bound_var_name(idx - 1, names)
       }
@@ -121,7 +127,11 @@ let string_of_ast = (ast) => {
     | Ast_var(idx) => bound_var_name(idx, names)
     | Ast_app(callee, parm) => soa_cmplx(callee) ++ " " ++ soa_cmplx(parm)
     | Ast_abs(ty, name, body) =>
-      "/" ++ name ++ ":" ++ string_of_ty(ty) ++ "." ++ soa_rec(body, [name, ...names])
+      let name' = switch name {
+      | Some(name) => name
+      | None => "_"
+      };
+      "/" ++ name' ++ ":" ++ string_of_ty(ty) ++ "." ++ soa_rec(body, [name, ...names])
     }
   };
   soa_rec(ast, [])
@@ -168,7 +178,7 @@ let typeof = (ast) =>
 let finish = (tm) => {
   let rec get_var = (name, names, idx) =>
     switch names {
-    | [x, ..._] when x == name => Result.Ok(Ast_var(idx))
+    | [x, ..._] when x == Some(name) => Result.Ok(Ast_var(idx))
     | [_, ...xs] => get_var(name, xs, idx + 1)
     | [] => Result.Err(Type_error_variable_not_found(name))
     };

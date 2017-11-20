@@ -16,7 +16,7 @@ let marker: unit => term;
 
 let var: string => term;
 
-let abs: (ty, string, term) => term;
+let abs: (ty, option(string), term) => term;
 
 let app: (term, term) => term;
 
