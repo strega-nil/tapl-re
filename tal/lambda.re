@@ -9,7 +9,10 @@ type term =
   | Term_unit
   | Term_var(string)
   | Term_abs(ty, option(string), term)
-  | Term_app(term, term);
+  | Term_app(term, term)
+  
+  /* this is where the "derived forms" begin */
+  | Term_let_in(string, term, term);
 
 type ast =
   | Ast_marker
@@ -19,18 +22,14 @@ type ast =
   | Ast_app(ast, ast);
 
 let ty_unit = () => Ty_unit;
-
 let ty_lam = (lhs, rhs) => Ty_lam(lhs, rhs);
 
 let unit = () => Term_unit;
-
 let marker = () => Term_marker;
-
 let var = (name) => Term_var(name);
-
 let abs = (ty, name, body) => Term_abs(ty, name, body);
-
 let app = (callee, parm) => Term_app(callee, parm);
+let let_in = (name, init, body) => Term_let_in(name, init, body);
 
 let rec string_of_ty = (ty) => {
   let is_unit = (ty) =>
@@ -60,6 +59,12 @@ let rec print_term = (term) => {
     | Term_unit => false
     | Term_var(_) => false
     | _ => true;
+  let print_cmplx = (tm) =>
+    if (is_cmplx(tm)) {
+      print_char('('); print_term(tm); print_char(')');
+    } else {
+      print_term(tm);
+    };
   switch term {
   | Term_marker => print_char('@')
   | Term_unit => print_string("()")
@@ -75,21 +80,14 @@ let rec print_term = (term) => {
     print_char('.');
     print_term(body)
   | Term_app(callee, parm) =>
-    if (is_cmplx(callee)) {
-      print_char('(')
-    };
-    print_term(callee);
-    if (is_cmplx(callee)) {
-      print_char(')')
-    };
+    print_cmplx(callee);
     print_char(' ');
-    if (is_cmplx(parm)) {
-      print_char('(')
-    };
-    print_term(parm);
-    if (is_cmplx(parm)) {
-      print_char(')')
-    }
+    print_cmplx(parm)
+  | Term_let_in(name, init, body) =>
+    print_string("let " ++ name ++ " = ");
+    print_cmplx(init);
+    print_string(" in ");
+    print_cmplx(body)
   }
 };
 
@@ -209,6 +207,17 @@ let finish = (tm) => {
     | Term_abs(ty, name, body) =>
       finish_rec(body, [name, ...names], [ty, ...tys])
       >>> (body') => Ast_abs(ty, name, body')
+    | Term_let_in(name, init, body) =>
+      finish_rec(init, names, tys)
+      >>= (init') => {
+        let init_ty = typeof(init');
+        finish_rec(body, [Some(name), ...names], [init_ty, ...tys])
+        >>> (body') =>
+          Ast_app(
+            Ast_abs(init_ty, Some(name), body'),
+            init'
+          )
+      }
     };
   finish_rec(tm, [], [])
 };

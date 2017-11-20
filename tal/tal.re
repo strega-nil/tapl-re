@@ -15,26 +15,24 @@ let rec eval_and_print = (ast) => {
 let finish = Lambda.finish;
 
 let nats = {|
-(/n:(unit -> unit) -> unit -> unit.
-  n @ ()
-) (
-  (/succ:((unit -> unit) -> unit -> unit) -> ((unit -> unit) -> unit -> unit).
-  (/zero:(unit -> unit) -> unit -> unit.
-    succ (succ (succ zero))
-  ))
-    (/n:(unit -> unit) -> unit -> unit.
+let n = (
+  let succ =
+    /n:(unit -> unit) -> unit -> unit.
       /s:unit -> unit./z:unit.
         s (n s z)
-    )
-    (/s:unit -> unit./z:unit.z)
-)
+  in
+  let zero =
+    /s:unit -> unit./z:unit.z
+  in
+  succ (succ (succ zero))
+) in n @ ()
 |};
 
 let term =
   switch (Parse.parse(nats)) {
   | Result.Ok(term) => term
   | Result.Err(e) =>
-    Parse.print_parser_error(e);
+    Parse.print_parser_error(e) |> print_newline;
     exit(1)
   };
 

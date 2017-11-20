@@ -20,6 +20,8 @@ let abs: (ty, option(string), term) => term;
 
 let app: (term, term) => term;
 
+let let_in: (string, term, term) => term;
+
 let finish: term => Result.t(ast, type_error);
 
 let typeof: ast => ty; /* if eval1 is finished, it returns None */
