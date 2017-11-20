@@ -13,6 +13,7 @@ let abs: ty => string => term => term;
 let app: term => term => term;
 
 let finish: term => ast;
+let typeof: ast => ty;
 
 /* if eval1 is finished, it returns None */
 let eval1: ast => option(ast);

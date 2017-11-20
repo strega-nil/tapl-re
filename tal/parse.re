@@ -191,8 +191,17 @@ let rec maybe_parse_term = (lex) => {
   let rec parse_app_list = (fst) => {
     switch (peek_token(lex)) {
     | None | Some(Tok_close_paren) => fst
-    | Some(Tok_open_paren) | Some(Tok_lambda) =>
+    | Some(Tok_lambda) =>
       Lambda.app(fst, parse_term(lex))
+    | Some(Tok_open_paren) =>
+      eat_token(lex);
+      let snd = switch (peek_token(lex)) {
+      | Some(Tok_close_paren) => Lambda.unit()
+      | Some(_) => parse_term(lex)
+      | None => raise(Parser_error_unexpected_eof)
+      };
+      get_close_paren();
+      parse_app_list(Lambda.app(fst, snd))
     | Some(Tok_var(snd)) =>
       eat_token(lex);
       parse_app_list(Lambda.app(fst, Lambda.var(snd)))
@@ -224,7 +233,7 @@ let rec maybe_parse_term = (lex) => {
   | Some(Tok_open_paren) =>
     eat_token(lex);
     switch (peek_token(lex)) {
-    | Some(Tok_close_paren) => eat_token(lex); Some(Lambda.unit())
+    | Some(Tok_close_paren) => eat_token(lex); Some(parse_app_list(Lambda.unit()))
     | Some(_) => 
       let ret = parse_term(lex);
       get_close_paren();

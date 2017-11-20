@@ -26,7 +26,7 @@ let var = (name) => Term_var(name);
 let abs = (ty, name, body) => Term_abs(ty, name, body);
 let app = (callee, parm) => Term_app(callee, parm);
 
-let rec print_ty = (ty) => {
+let rec string_of_ty = (ty) => {
   let is_unit = (ty) => {
     switch (ty) {
     | Ty_unit => true
@@ -35,18 +35,18 @@ let rec print_ty = (ty) => {
   };
 
   switch (ty) {
-  | Ty_unit => print_string("unit")
+  | Ty_unit => "unit"
   | Ty_lam(lhs, rhs) =>
-    if (is_unit(lhs)) {
-      print_string("unit -> ");
+    let lhs' = if (is_unit(lhs)) {
+      "unit -> "
     } else {
-      print_char('(');
-      print_ty(lhs);
-      print_string(") -> ");
+      "(" ++ string_of_ty(lhs) ++ ") -> "
     };
-    print_ty(rhs)
+    lhs' ++ string_of_ty(rhs)
   }
 };
+
+let print_ty = (ty) => print_string(string_of_ty(ty));
 
 let rec print_term = (term) => {
   let is_cmplx = fun
@@ -77,7 +77,7 @@ let rec print_term = (term) => {
   }
 };
 
-let print_ast = (ast) => {
+let string_of_ast = (ast) => {
   let rec bound_var_name = (idx, names) => switch (names) {
   | [name, ...names] =>
     if (idx == 0) { name } else { bound_var_name(idx - 1, names) }
@@ -91,54 +91,66 @@ let print_ast = (ast) => {
   | _ => true
   };
 
-  let rec print_ast_rec = (ast, names) => {
-    let print_cmplx = (ast) => {
+  let rec soa_rec = (ast, names) => {
+    let soa_cmplx = (ast) => {
       if (is_cmplx(ast)) {
-        print_char('('); print_ast_rec(ast, names); print_char(')')
+        "(" ++ soa_rec(ast, names) ++ ")"
       } else {
-        print_ast_rec(ast, names)
+        soa_rec(ast, names)
       }
     };
     switch (ast) {
-    | Ast_marker => print_char('@')
-    | Ast_unit => print_string("()")
-    | Ast_var(idx) => print_string(bound_var_name(idx, names))
+    | Ast_marker => "@"
+    | Ast_unit => "()"
+    | Ast_var(idx) => bound_var_name(idx, names)
     | Ast_app(callee, parm) =>
-      print_cmplx(callee);
-      print_char(' ');
-      print_cmplx(parm)
+      soa_cmplx(callee) ++ " " ++ soa_cmplx(parm)
     | Ast_abs(ty, name, body) =>
-      print_char('/');
-      print_string(name);
-      print_char(':');
-      print_ty(ty);
-      print_char('.');
-      print_ast_rec(body, [name, ...names])
+      "/" ++ name ++ ":" ++ string_of_ty(ty) ++ "." ++ soa_rec(body, [name, ...names])
     }
   };
 
-  print_ast_rec(ast, [])
+  soa_rec(ast, [])
 };
+
+let print_ast = (ast) => print_string(string_of_ast(ast));
 
 exception Type_error_variable_not_found(string);
 exception Type_error_incorrect_types(ty, ty);
-exception Type_error_calling_non_callable(ty);
+exception Type_error_calling_non_callable(ty, ast);
+
+Printexc.register_printer(
+  fun
+  | Type_error_variable_not_found(var) =>
+    Some("variable not found: " ++ var)
+  | Type_error_incorrect_types(lhs, rhs) =>
+    Some("type mismatch: " ++ string_of_ty(lhs) ++ " != " ++ string_of_ty(rhs))
+  | Type_error_calling_non_callable(ty, ast) =>
+    Some(
+      "attempt to call non-callable: " ++ string_of_ty(ty)
+      ++ "\n  " ++ string_of_ast(ast))
+  | _ => None
+);
+
+let rec typeof_rec = (ast, tys) => switch (ast) {
+| Ast_app(callee, _) as ast' =>
+  switch (typeof_rec(callee, tys)) {
+  | Ty_lam(_, ret) => ret
+  | ty => raise(Type_error_calling_non_callable(ty, ast'))
+  }
+| Ast_abs(ty, _, body) => Ty_lam(ty, typeof_rec(body, [ty, ...tys]))
+| Ast_unit => Ty_unit
+| Ast_marker => Ty_lam(Ty_unit, Ty_unit)
+| Ast_var(idx) => List.nth(tys, idx)
+};
+
+let typeof = (ast) => typeof_rec(ast, []);
+
 let finish = (tm) => {
   let rec get_var = (name, names, idx) => switch (names) {
   | [x, ..._] when x == name => Ast_var(idx)
   | [_, ...xs] => get_var(name, xs, idx + 1)
   | [] => raise(Type_error_variable_not_found(name))
-  };
-  let rec typeof = (ast, tys) => switch (ast) {
-  | Ast_app(callee, _) =>
-    switch (typeof(callee, tys)) {
-    | Ty_lam(_, ret) => ret
-    | ty => raise(Type_error_calling_non_callable(ty))
-    }
-  | Ast_abs(ty, _, body) => Ty_lam(ty, typeof(body, [ty, ...tys]))
-  | Ast_unit => Ty_unit
-  | Ast_marker => Ty_lam(Ty_unit, Ty_unit)
-  | Ast_var(idx) => List.nth(tys, idx)
   };
   let rec finish_rec = (tm, names, tys) => {
     switch (tm) {
@@ -148,15 +160,15 @@ let finish = (tm) => {
     | Term_app(callee, parm) =>
       let callee' = finish_rec(callee, names, tys);
       let parm' = finish_rec(parm, names, tys);
-      switch (typeof(callee', tys)) {
+      switch (typeof_rec(callee', tys)) {
       | Ty_lam(parm_ty, _) =>
-        let parm_ty' = typeof(parm', tys);
+        let parm_ty' = typeof_rec(parm', tys);
         if (parm_ty != parm_ty') {
           raise(Type_error_incorrect_types(parm_ty, parm_ty'));
         } else {
           Ast_app(callee', parm')
         }
-      | ty => raise(Type_error_calling_non_callable(ty))
+      | ty => raise(Type_error_calling_non_callable(ty, Ast_app(callee', parm')))
       }
     | Term_abs(ty, name, body) =>
       Ast_abs(ty, name, finish_rec(body, [name, ...names], [ty, ...tys]))
@@ -182,10 +194,14 @@ let substitute = (body, parm) => {
 let rec eval1 = (ast) => {
   let rec eval_app = (callee, parm) => {
     switch (callee) {
-    | Ast_marker => None
     | Ast_unit => None
     | Ast_var(_) => failwith("malformed lambda ast")
     | Ast_abs(_, _, body) => Some(substitute(body, parm))
+    | Ast_marker =>
+      switch (eval1(parm)) {
+      | Some(parm') => Some(Ast_app(Ast_marker, parm'))
+      | None => None
+      }
     | Ast_app(callee', parm') =>
       switch (eval_app(callee', parm')) {
       | Some(callee) => Some(Ast_app(callee, parm))
