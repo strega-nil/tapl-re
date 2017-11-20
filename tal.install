@@ -1,7 +1,0 @@
-lib: [
-  "_build/install/default/lib/tal/META" {"META"}
-  "_build/install/default/lib/tal/opam" {"opam"}
-]
-bin: [
-  "_build/install/default/bin/tal" {"tal"}
-]
