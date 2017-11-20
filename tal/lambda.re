@@ -122,24 +122,47 @@ let print_ast = (ast) => {
 
 exception Type_error_variable_not_found(string);
 exception Type_error_incorrect_types(ty, ty);
+exception Type_error_calling_non_callable(ty);
 let finish = (tm) => {
   let rec get_var = (name, names, idx) => switch (names) {
   | [x, ..._] when x == name => Ast_var(idx)
   | [_, ...xs] => get_var(name, xs, idx + 1)
   | [] => raise(Type_error_variable_not_found(name))
   };
-  let rec finish_rec = (tm, names) => {
+  let rec typeof = (ast, tys) => switch (ast) {
+  | Ast_app(callee, _) =>
+    switch (typeof(callee, tys)) {
+    | Ty_lam(_, ret) => ret
+    | ty => raise(Type_error_calling_non_callable(ty))
+    }
+  | Ast_abs(ty, _, body) => Ty_lam(ty, typeof(body, [ty, ...tys]))
+  | Ast_unit => Ty_unit
+  | Ast_marker => Ty_lam(Ty_unit, Ty_unit)
+  | Ast_var(idx) => List.nth(tys, idx)
+  };
+  let rec finish_rec = (tm, names, tys) => {
     switch (tm) {
     | Term_marker => Ast_marker
     | Term_unit => Ast_unit
     | Term_var(name) => get_var(name, names, 0)
     | Term_app(callee, parm) =>
-      Ast_app(finish_rec(callee, names), finish_rec(parm, names))
+      let callee' = finish_rec(callee, names, tys);
+      let parm' = finish_rec(parm, names, tys);
+      switch (typeof(callee', tys)) {
+      | Ty_lam(parm_ty, _) =>
+        let parm_ty' = typeof(parm', tys);
+        if (parm_ty != parm_ty') {
+          raise(Type_error_incorrect_types(parm_ty, parm_ty'));
+        } else {
+          Ast_app(callee', parm')
+        }
+      | ty => raise(Type_error_calling_non_callable(ty))
+      }
     | Term_abs(ty, name, body) =>
-      Ast_abs(ty, name, finish_rec(body, [name, ...names]))
+      Ast_abs(ty, name, finish_rec(body, [name, ...names], [ty, ...tys]))
     }
   };
-  finish_rec(tm, [])
+  finish_rec(tm, [], [])
 };
 
 let substitute = (body, parm) => {

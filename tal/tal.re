@@ -15,6 +15,12 @@ let rec eval_and_print = (ast) => {
 
 let finish = Lambda.finish;
 
-let term = Parse.parse("/x:unit.x x");
+let term = Parse.parse("
+(/n:(unit->unit)->unit->unit.
+  n @ ()
+) (
+  (/s:unit->unit./z:unit.s z)
+)
+");
 Lambda.print_term(term) |> print_newline;
 eval_and_print(finish(term));

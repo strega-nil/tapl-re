@@ -6,9 +6,22 @@ type token =
 | Tok_colon
 | Tok_arrow
 | Tok_unit
+| Tok_marker
 | Tok_open_paren
 | Tok_close_paren
 | Tok_var(string);
+
+let string_of_token = (tok) => switch (tok) {
+| Tok_lambda => "/"
+| Tok_dot => "."
+| Tok_colon => ":"
+| Tok_arrow => "->"
+| Tok_unit => "unit"
+| Tok_marker => "@"
+| Tok_open_paren => "("
+| Tok_close_paren => ")"
+| Tok_var(name) => name
+};
 
 type lexer = {
   buffer: string,
@@ -95,6 +108,7 @@ let next_token = (lex) => {
       | Some('>') => Some(Tok_arrow)
       | _ => raise(Lexer_error_unrecognized_character)
       }
+    | Some('@') => Some(Tok_marker)
     | Some('(') => Some(Tok_open_paren)
     | Some(')') => Some(Tok_close_paren)
     | Some(ch) when is_ident_start(ch) =>
@@ -117,44 +131,61 @@ let peek_token = (lex) => {
 
 let eat_token = (lex) => next_token(lex) |> ignore;
 
-exception Parser_error_unexpected_token;
+exception Parser_error_unexpected_token(token);
 exception Parser_error_unexpected_eof;
+Printexc.register_printer(
+  fun
+  | Parser_error_unexpected_token(tok) =>
+    Some("unexpected token: " ++ string_of_token(tok))
+  | Parser_error_unexpected_eof =>
+    Some("unexpected end of file")
+  | _ => None
+);
 
 let rec maybe_parse_term = (lex) => {
   let get_var = () => {
     switch (next_token(lex)) {
     | Some(Tok_var(name)) => name
-    | Some(_) => raise(Parser_error_unexpected_token)
+    | Some(tok) => raise(Parser_error_unexpected_token(tok))
     | None => raise(Parser_error_unexpected_eof)
     }
   };
   let get_dot = () => {
     switch (next_token(lex)) {
     | Some(Tok_dot) => ()
-    | Some(_) => raise(Parser_error_unexpected_token)
+    | Some(tok) => raise(Parser_error_unexpected_token(tok))
     | None => raise(Parser_error_unexpected_eof)
     }
   };
   let get_colon = () => {
     switch (next_token(lex)) {
     | Some(Tok_colon) => ()
-    | Some(_) => raise(Parser_error_unexpected_token)
+    | Some(tok) => raise(Parser_error_unexpected_token(tok))
     | None => raise(Parser_error_unexpected_eof)
     }
   };
   let get_close_paren = () => {
     switch (next_token(lex)) {
     | Some(Tok_close_paren) => ()
-    | Some(_) => raise(Parser_error_unexpected_token)
+    | Some(tok) => raise(Parser_error_unexpected_token(tok))
     | None => raise(Parser_error_unexpected_eof)
     }
   };
-  let get_ty = () => {
-    switch(next_token(lex)) {
+  let rec get_ty = () => {
+    let lhs = switch (next_token(lex)) {
     | Some(Tok_unit) => Lambda.ty_unit()
-    | Some(Tok_open_paren) => failwith("unimplemented")
-    | Some(_) => raise(Parser_error_unexpected_token)
+    | Some(Tok_open_paren) =>
+      let ty = get_ty();
+      get_close_paren();
+      ty
+    | Some(tok) => raise(Parser_error_unexpected_token(tok))
     | None => raise(Parser_error_unexpected_eof)
+    };
+    switch (peek_token(lex)) {
+    | Some(Tok_arrow) =>
+      eat_token(lex);
+      Lambda.ty_lam(lhs, get_ty())
+    | Some(_) | None => lhs
     }
   };
   let rec parse_app_list = (fst) => {
@@ -165,8 +196,11 @@ let rec maybe_parse_term = (lex) => {
     | Some(Tok_var(snd)) =>
       eat_token(lex);
       parse_app_list(Lambda.app(fst, Lambda.var(snd)))
-    | Some(_) =>
-      raise(Parser_error_unexpected_token)
+    | Some(Tok_marker) =>
+      eat_token(lex);
+      parse_app_list(Lambda.app(fst, Lambda.marker()))
+    | Some(tok) =>
+      raise(Parser_error_unexpected_token(tok))
     }
   };
 
@@ -184,13 +218,20 @@ let rec maybe_parse_term = (lex) => {
   | Some(Tok_var(name)) =>
     eat_token(lex);
     Some(parse_app_list(Lambda.var(name)))
-  | Some(Tok_open_paren) =>
-    /* todo: implement unit */
+  | Some(Tok_marker) =>
     eat_token(lex);
-    let ret = parse_term(lex);
-    get_close_paren();
-    Some(parse_app_list(ret))
-  | Some(_) => raise(Parser_error_unexpected_token);
+    Some(parse_app_list(Lambda.marker()))
+  | Some(Tok_open_paren) =>
+    eat_token(lex);
+    switch (peek_token(lex)) {
+    | Some(Tok_close_paren) => eat_token(lex); Some(Lambda.unit())
+    | Some(_) => 
+      let ret = parse_term(lex);
+      get_close_paren();
+      Some(parse_app_list(ret))
+    | None => raise(Parser_error_unexpected_eof)
+    }
+  | Some(tok) => raise(Parser_error_unexpected_token(tok))
   }
 } and parse_term = (lex) => {
   switch (maybe_parse_term(lex)) {
@@ -198,7 +239,7 @@ let rec maybe_parse_term = (lex) => {
   | None =>
     switch (next_token(lex)) {
     | None => raise(Parser_error_unexpected_eof)
-    | Some(_) => raise(Parser_error_unexpected_token)
+    | Some(tok) => raise(Parser_error_unexpected_token(tok))
     }
   }
 };
