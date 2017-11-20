@@ -15,6 +15,6 @@ let bind = (lam, res) =>
   };
 
 module Monad = {
-  let (>>>) = (x, y) => map(y, x);
   let (>>=) = (x, y) => bind(y, x);
+  let pure = (x) => Ok(x);
 };

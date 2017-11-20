@@ -145,10 +145,10 @@ let next_token: lexer => Result.t(token, lexer_error) =
   };
 
 let peek_token = (lex) => {
-  next_token(lex) >>>
-  (tok) => {
+  next_token(lex)
+  >>= (tok) => {
     lex.peekahead = Some(tok);
-    tok
+    pure(tok)
   }
 };
 
@@ -218,14 +218,18 @@ let rec maybe_parse_term = (lex) => {
     let lhs =
       switch (next_token(lex)) {
       | Result.Ok(Tok_unit) => Result.Ok(Lambda.ty_unit())
-      | Result.Ok(Tok_open_paren) => get_ty() >>= ((ty) => get_close_paren() >>> (() => ty))
+      | Result.Ok(Tok_open_paren) =>
+        get_ty()
+        >>= (ty) => get_close_paren()
+        >>= () => pure(ty)
       | r => final_case(r)
       };
     lhs >>= (lhs) =>
       switch (peek_token(lex)) {
       | Result.Ok(Tok_arrow) =>
         eat_token(lex);
-        get_ty() >>> ((it) => Lambda.ty_lam(lhs, it))
+        get_ty()
+        >>= (it) => pure(Lambda.ty_lam(lhs, it))
       | Result.Ok(_)
       | Result.Err(Lexer_error_end_of_file) => Result.Ok(lhs)
       | Result.Err(Lexer_error_unrecognized_character(ch)) =>
@@ -237,7 +241,9 @@ let rec maybe_parse_term = (lex) => {
     | Result.Err(Lexer_error_end_of_file)
     | Result.Ok(Tok_close_paren)
     | Result.Ok(Tok_in) => Result.Ok(fst)
-    | Result.Ok(Tok_lambda) => parse_term(lex) >>> ((it) => Lambda.app(fst, it))
+    | Result.Ok(Tok_lambda) =>
+      parse_term(lex)
+      >>= (it) => pure(Lambda.app(fst, it))
     | Result.Ok(Tok_open_paren) =>
       eat_token(lex);
       let snd =
@@ -267,15 +273,15 @@ let rec maybe_parse_term = (lex) => {
     >>= () => get_ty()
     >>= (ty) => get_dot()
     >>= () => parse_term(lex)
-    >>> (body) => Some(Lambda.abs(ty, name, body))
+    >>= (body) => pure(Some(Lambda.abs(ty, name, body)))
   | Result.Ok(Tok_var(name)) =>
     eat_token(lex);
     parse_app_list(Lambda.var(name))
-    >>> (it) => Some(it)
+    >>= (it) => pure(Some(it))
   | Result.Ok(Tok_marker) =>
     eat_token(lex);
     parse_app_list(Lambda.marker())
-    >>> (it) => Some(it)
+    >>= (it) => pure(Some(it))
   | Result.Ok(Tok_let) =>
     eat_token(lex);
     get_var()
@@ -283,19 +289,19 @@ let rec maybe_parse_term = (lex) => {
     >>= () => parse_term(lex)
     >>= (init) => get_in()
     >>= () => parse_term(lex)
-    >>> (body) => Some(Lambda.let_in(name, init, body))
+    >>= (body) => pure(Some(Lambda.let_in(name, init, body)))
   | Result.Ok(Tok_open_paren) =>
     eat_token(lex);
     switch (peek_token(lex)) {
     | Result.Ok(Tok_close_paren) =>
       eat_token(lex);
       parse_app_list(Lambda.unit())
-      >>> (it) => Some(it)
+      >>= (it) => pure(Some(it))
     | Result.Ok(_) =>
       parse_term(lex)
       >>= (ret) => get_close_paren()
       >>= () => parse_app_list(ret)
-      >>> (it) => Some(it)
+      >>= (it) => pure(Some(it))
     | r => final_case(r)
     }
   | Result.Ok(tok) => Result.Err(Parser_error_unexpected_token(tok))

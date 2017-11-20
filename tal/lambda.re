@@ -161,7 +161,9 @@ let rec typeof_rec = (ast, tys) =>
     | Result.Ok(ty) => Result.Err(Type_error_calling_non_callable(ty, ast'))
     | Result.Err(e) => Result.Err(e)
     }
-  | Ast_abs(ty, _, body) => typeof_rec(body, [ty, ...tys]) >>> (it) => Ty_lam(ty, it)
+  | Ast_abs(ty, _, body) =>
+    typeof_rec(body, [ty, ...tys])
+    >>= (it) => pure(Ty_lam(ty, it))
   | Ast_unit => Result.Ok(Ty_unit)
   | Ast_marker => Result.Ok(Ty_lam(Ty_unit, Ty_unit))
   | Ast_var(idx) => Result.Ok(List.nth(tys, idx))
@@ -206,17 +208,17 @@ let finish = (tm) => {
         }
     | Term_abs(ty, name, body) =>
       finish_rec(body, [name, ...names], [ty, ...tys])
-      >>> (body') => Ast_abs(ty, name, body')
+      >>= (body') => pure(Ast_abs(ty, name, body'))
     | Term_let_in(name, init, body) =>
       finish_rec(init, names, tys)
       >>= (init') => {
         let init_ty = typeof(init');
         finish_rec(body, [Some(name), ...names], [init_ty, ...tys])
-        >>> (body') =>
-          Ast_app(
+        >>= (body') =>
+          pure(Ast_app(
             Ast_abs(init_ty, Some(name), body'),
             init'
-          )
+          ))
       }
     };
   finish_rec(tm, [], [])
