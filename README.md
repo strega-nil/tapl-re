@@ -10,3 +10,5 @@ application of `@` is not evaluated (although the body *is* evaluated). This
 is useful for printing numbers; `n @ ()`, which would print as if `()` is
 `Z`, while `@` is `S`. Similarly, `true` can be implemented as `@ ()`, versus
 `false` is `()`.
+
+Notes: DO NOT RUN `refmt`! It makes the do blocks *really* ugly.
