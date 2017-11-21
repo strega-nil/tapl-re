@@ -14,8 +14,9 @@ type token =
   | Tok_close_paren
   | Tok_marker
 
-  | Tok_equals
   | Tok_let
+  | Tok_type
+  | Tok_equals
   | Tok_in
 
   | Tok_underscore
@@ -31,8 +32,9 @@ let string_of_token = (tok) =>
   | Tok_open_paren => "("
   | Tok_close_paren => ")"
   | Tok_marker => "@"
-  | Tok_equals => "="
   | Tok_let => "let"
+  | Tok_type => "type"
+  | Tok_equals => "="
   | Tok_in => "in"
   | Tok_underscore => "_"
   | Tok_var(name) => name
@@ -133,10 +135,12 @@ let next_token: lexer => Result.t(token, lexer_error) =
           Result.Ok(Tok_underscore)
         } else if (res == "let") {
           Result.Ok(Tok_let)
+        } else if (res == "type") {
+          Result.Ok(Tok_type)
         } else if (res == "in") {
           Result.Ok(Tok_in)
         } else {
-          Result.Ok(Tok_var(lex_ident(ch)))
+          Result.Ok(Tok_var(res))
         }
       | Some(ch) => Result.Err(Lexer_error_unrecognized_character(ch))
       | None => Result.Err(Lexer_error_end_of_file)
@@ -218,6 +222,7 @@ let rec maybe_parse_term = (lex) => {
     let lhs =
       switch (next_token(lex)) {
       | Result.Ok(Tok_unit) => Result.Ok(Lambda.ty_unit())
+      | Result.Ok(Tok_var(name)) => Result.Ok(Lambda.ty_named(name))
       | Result.Ok(Tok_open_paren) =>
         get_ty()
         >>= (ty) => get_close_paren()
@@ -290,6 +295,14 @@ let rec maybe_parse_term = (lex) => {
     >>= (init) => get_in()
     >>= () => parse_term(lex)
     >>= (body) => pure(Some(Lambda.let_in(name, init, body)))
+  | Result.Ok(Tok_type) =>
+    eat_token(lex);
+    get_var()
+    >>= (name) => get_equals()
+    >>= () => get_ty()
+    >>= (ty) => get_in()
+    >>= () => parse_term(lex)
+    >>= (body) => pure(Some(Lambda.type_in(name, ty, body)))
   | Result.Ok(Tok_open_paren) =>
     eat_token(lex);
     switch (peek_token(lex)) {

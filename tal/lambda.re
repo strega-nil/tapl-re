@@ -2,7 +2,8 @@ open Result.Monad;
 
 type ty =
   | Ty_unit
-  | Ty_lam(ty, ty);
+  | Ty_lam(ty, ty)
+  | Ty_named(string);
 
 type term =
   | Term_marker
@@ -12,7 +13,8 @@ type term =
   | Term_app(term, term)
   
   /* this is where the "derived forms" begin */
-  | Term_let_in(string, term, term);
+  | Term_let_in(string, term, term)
+  | Term_type_in(string, ty, term);
 
 type ast =
   | Ast_marker
@@ -23,6 +25,7 @@ type ast =
 
 let ty_unit = () => Ty_unit;
 let ty_lam = (lhs, rhs) => Ty_lam(lhs, rhs);
+let ty_named = (name) => Ty_named(name);
 
 let unit = () => Term_unit;
 let marker = () => Term_marker;
@@ -30,21 +33,24 @@ let var = (name) => Term_var(name);
 let abs = (ty, name, body) => Term_abs(ty, name, body);
 let app = (callee, parm) => Term_app(callee, parm);
 let let_in = (name, init, body) => Term_let_in(name, init, body);
+let type_in = (name, ty, body) => Term_type_in(name, ty, body);
 
 let rec string_of_ty = (ty) => {
-  let is_unit = (ty) =>
+  let is_cmplx = (ty) =>
     switch ty {
     | Ty_unit => true
+    | Ty_named(_) => true
     | Ty_lam(_, _) => false
     };
   switch ty {
   | Ty_unit => "unit"
+  | Ty_named(name) => name
   | Ty_lam(lhs, rhs) =>
     let lhs' =
-      if (is_unit(lhs)) {
-        "unit -> "
-      } else {
+      if (is_cmplx(lhs)) {
         "(" ++ string_of_ty(lhs) ++ ") -> "
+      } else {
+        string_of_ty(lhs) ++ " -> "
       };
     lhs' ++ string_of_ty(rhs)
   }
@@ -86,7 +92,12 @@ let rec print_term = (term) => {
   | Term_let_in(name, init, body) =>
     print_string("let " ++ name ++ " = ");
     print_cmplx(init);
-    print_string(" in ");
+    print_string(" in\n");
+    print_cmplx(body)
+  | Term_type_in(name, ty, body) =>
+    print_string("type " ++ name ++ " = ");
+    print_ty(ty);
+    print_string(" in\n");
     print_cmplx(body)
   }
 };
@@ -139,12 +150,14 @@ let print_ast = (ast) => print_string(string_of_ast(ast));
 
 type type_error =
   | Type_error_variable_not_found(string)
+  | Type_error_type_not_found(string)
   | Type_error_incorrect_types(ty, ty)
   | Type_error_calling_non_callable(ty, ast);
 
 let print_type_error = (err) =>
   switch err {
   | Type_error_variable_not_found(var) => print_string("variable not found: " ++ var)
+  | Type_error_type_not_found(ty) => print_string("type not found: " ++ ty)
   | Type_error_incorrect_types(lhs, rhs) =>
     print_string("type mismatch: " ++ string_of_ty(lhs) ++ " != " ++ string_of_ty(rhs))
   | Type_error_calling_non_callable(ty, ast) =>
@@ -158,6 +171,7 @@ let rec typeof_rec = (ast, tys) =>
   | Ast_app(callee, _) as ast' =>
     switch (typeof_rec(callee, tys)) {
     | Result.Ok(Ty_lam(_, ret)) => Result.Ok(ret)
+    | Result.Ok(Ty_named(_)) => failwith("malformed ast")
     | Result.Ok(ty) => Result.Err(Type_error_calling_non_callable(ty, ast'))
     | Result.Err(e) => Result.Err(e)
     }
@@ -171,6 +185,7 @@ let rec typeof_rec = (ast, tys) =>
 
 let typeof = (ast) =>
   switch (typeof_rec(ast, [])) {
+  | Result.Ok(Ty_named(_)) => failwith("malformed ast")
   | Result.Ok(ty) => ty
   | Result.Err(_) => failwith("malformed ast")
   };
@@ -182,14 +197,31 @@ let finish = (tm) => {
     | [_, ...xs] => get_var(name, xs, idx + 1)
     | [] => Result.Err(Type_error_variable_not_found(name))
     };
-  let rec finish_rec = (tm, names, tys) =>
+  let rec get_structural_ty = (ty, ty_names) => {
+    let rec get_named_ty = (name, ty_names) =>
+      switch ty_names {
+      | [(name', ty), ..._] when name' == name => Result.Ok(ty)
+      | [_, ...xs] => get_named_ty(name, xs)
+      | [] => Result.Err(Type_error_type_not_found(name))
+      };
+
+    switch ty {
+    | Ty_named(name) => get_named_ty(name, ty_names)
+    | Ty_lam(lhs, rhs) =>
+      get_structural_ty(lhs, ty_names)
+      >>= (lhs) => get_structural_ty(rhs, ty_names)
+      >>= (rhs) => pure(Ty_lam(lhs, rhs))
+    | Ty_unit => pure(Ty_unit)
+    }
+  };
+  let rec finish_rec = (tm, names, tys, ty_names) =>
     switch tm {
     | Term_marker => Result.Ok(Ast_marker)
     | Term_unit => Result.Ok(Ast_unit)
     | Term_var(name) => get_var(name, names, 0)
     | Term_app(callee, parm) =>
-      finish_rec(callee, names, tys)
-      >>= (callee') => finish_rec(parm, names, tys)
+      finish_rec(callee, names, tys, ty_names)
+      >>= (callee') => finish_rec(parm, names, tys, ty_names)
       >>= (parm') => typeof_rec(callee', tys)
       >>= (it) =>
         switch it {
@@ -201,27 +233,32 @@ let finish = (tm) => {
             } else {
               Result.Ok(Ast_app(callee', parm'))
             }
+        | Ty_named(_) => failwith("substitution of named types failed")
         | ty =>
           Result.Err(
             Type_error_calling_non_callable(ty, Ast_app(callee', parm'))
           )
         }
     | Term_abs(ty, name, body) =>
-      finish_rec(body, [name, ...names], [ty, ...tys])
+      get_structural_ty(ty, ty_names)
+      >>= (ty) => finish_rec(body, [name, ...names], [ty, ...tys], ty_names)
       >>= (body') => pure(Ast_abs(ty, name, body'))
     | Term_let_in(name, init, body) =>
-      finish_rec(init, names, tys)
+      finish_rec(init, names, tys, ty_names)
       >>= (init') => {
         let init_ty = typeof(init');
-        finish_rec(body, [Some(name), ...names], [init_ty, ...tys])
+        finish_rec(body, [Some(name), ...names], [init_ty, ...tys], ty_names)
         >>= (body') =>
           pure(Ast_app(
             Ast_abs(init_ty, Some(name), body'),
             init'
           ))
       }
+    | Term_type_in(name, ty, body) =>
+      get_structural_ty(ty, ty_names)
+      >>= (ty) => finish_rec(body, names, tys, [(name, ty), ...ty_names])
     };
-  finish_rec(tm, [], [])
+  finish_rec(tm, [], [], [])
 };
 
 let substitute = (body, parm) => {
@@ -259,7 +296,7 @@ let rec eval1 = (ast) => {
   switch ast {
   | Ast_marker => None
   | Ast_unit => None
-  | Ast_var(_) => failwith("malformed lambda ast")
+  | Ast_var(_) => failwith("malformed ast")
   | Ast_abs(_, _, _) => None
   | Ast_app(callee, parm) => eval_app(callee, parm)
   }
